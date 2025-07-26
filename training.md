@@ -101,7 +101,7 @@ We'll use the following notation to simplify calculations throughout this sectio
 
 | Notation | Meaning (hardware characteristic)                                                                 |
 | :------- | :------------------------------------------------------------------------------------------------ |
-| C        | FLOPS/s per chip                                                                                  |
+| C        | FLOPS per chip                                                                                  |
 | W        | Network bandwidth (bidirectional, often subscripted as  e.g. $W_{\text{ici}}$ or $W_{\text{dcn}}$ |
 | X        | Number of chips along mesh axis X                                                                 |
 | Y        | Number of chips along an alternate mesh axis, labeled Y                                           |
