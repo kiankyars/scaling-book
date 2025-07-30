@@ -214,7 +214,42 @@ Again assuming B is small, we have 2BDF bfloat16 FLOPs but only DF weights (inst
 
 {% enddetails %}
 
-**Question 3:** For the problem above, make a roofline plot of peak FLOPs vs. B for several values of D and F.
+**Question 3:** Taking the setup from Question 2, make a roofline plot of peak FLOPs vs. $B$ for $F = D = 4096$ and $F = D = 1024$. *Use the exact number of bytes loaded, not an approximation.*
+
+{% details Click here for the answer. %}
+
+Here is the plot in question:
+
+{% include figure.liquid path="assets/img/roofline-plot-q3.png" class="img-fluid img-small" %}
+
+Note that both models eventually acheive the peak hardware FLOPs/s, but the larger D/F achieve it sooner. D=F=1024 almost doubles the critical batch size. The code to generate this figure is here:
+
+```py
+import matplotlib.pyplot as plt
+import numpy as np
+
+bs = np.arange(1, 512)
+
+def roofline(B, D, F):
+  total_flops = 2*B*D*F
+  flops_time = total_flops / 1.97e14
+  comms_time = (2*B*D + D*F + 2*B*F) / 8.2e11
+  total_time = np.maximum(flops_time, comms_time)
+  return total_flops / total_time
+
+roofline_big = roofline(bs, 4096, 4096)
+roofline_small = roofline(bs, 1024, 1024)
+
+plt.figure(figsize=(8, 4))
+plt.plot(bs, roofline_big, label='F=D=4096')
+plt.plot(bs, roofline_small, label='F=D=1024')
+plt.legend()
+plt.xlabel('batch size')
+plt.ylabel('peak bfloat16 FLOPs/s on TPU v5e')
+plt.grid()
+```
+
+{% enddetails %}
 
 **Question 4:** What if we wanted to perform $\text{int8[B, D]} *_D \text{int8[B, D, F]} \rightarrow \text{int8[B, F]}$ where we imagine having a different matrix for each batch element. What is the arithmetic intensity of this operation?
 

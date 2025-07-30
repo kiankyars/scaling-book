@@ -146,9 +146,11 @@ We can see the matmul (the fusion) and the AllReduce above. Pay particular atten
 import jax
 import jax.numpy as jnp
 
+mesh = jax.make_mesh((4, 2), ('X', 'Y'))
+
 def matmul(x, Win, Wout):
   hidden = jnp.einsum('bd,df->bf', x, Win)
-  hidden = jax.lax.with_sharding_constraint(hidden, P('x', 'y'))
+  hidden = jax.lax.with_sharding_constraint(hidden, jax.sharding.NamedSharding(mesh, P('x', 'y')))
   return jnp.einsum('bf,df->bd', hidden, Wout)
 ```
 
@@ -277,13 +279,89 @@ Now here are a couple of useful worked problems to try and implement using `jax.
 
 Here are some random JAX-related problems. I'll add some more later. For all of these, you'll need some number of TPUs in a Colab. You can use a public Colab with TPUv2-8. From now on, we'll assume you have N devices available.
 
-**Problem 1:** For the next several parts, we'll let **A** be an array of activations of shape float32[S<sub>X</sub>, D<sub>Y</sub>] with `X * Y = N`. Do the following:
+**Problem 1:** Let **A** be an array of activations of shape float32[S<sub>X</sub>, D<sub>Y</sub>] with `X * Y = N`. Do the following:
 
-1. Write a function in JAX that computes the average over each `X` shard, i.e. it returns an array of size [X, D<sub>Y</sub>] where `arr[i]` is the average over shard `i`. Do this with both `jax.jit` and `shard_map`. Profile each and see how long they took. Was there any communication added? *Hint: there shouldn't be, but sometimes XLA adds it anyway.* [*Here's the answer.*](https://pastecode.io/s/0v603d9o)
+1. Write a function in JAX that computes the average within each `(X, Y)` shard, i.e. it returns an array of size [X, Y] where `arr[i, j]` is the average over shard `(i, j)`. Do this with both `jax.jit` and `shard_map`. Profile each and see how long they took. Was there any communication added? *Hint: there shouldn't be, but sometimes XLA adds it anyway.*
 
-2. Write a function in JAX that returns roll(x, shift) - x for some shift **within each shard X**. I'm not enough of a masochist to make you do this in jax.jit, so just do this with `shard_map`.
+2. Write a function in JAX that returns roll(x, shift, axis=0) - x for some shift **within each shard X**. I'm not enough of a masochist to make you do this in jax.jit, so just do this with `shard_map`.
 
-**Problem 2:** Here we'll make a basic "mixture of experts" model together. Let **W**: float32[E<sub>X</sub>, D, F<sub>Y</sub>] be a set of E "expert" matrices. Let **A** be as above (our activations) and let **B** be a set of "routing assignments" where B[i] is an integer in the range `[0, E)` telling us which matrix we want to process that activation. We want to write a function in JAX that returns `Out[i] = W[B[i]] @ A[i]`.
+{% details Click here for the answer. %}
+
+Part 1: Here is a solution to part 1. Note the fairly complex reshapes we have to do for the `jax.jit` solution.
+ 
+```py
+import numpy as np
+
+import jax
+import jax.numpy as jnp
+from jax.experimental import shard_map
+
+P = jax.sharding.PartitionSpec
+
+mesh = jax.make_mesh((4, 2), ('X','Y'))
+
+average_shmap = shard_map.shard_map(
+    lambda x: x.mean(keepdims=True), 
+    mesh=mesh, 
+    in_specs=P('X','Y'), out_specs=P('X','Y')
+)
+
+def average(x):
+  X, Y = mesh.axis_sizes
+  return x.reshape(X, x.shape[0] // X, Y, x.shape[1] // Y).mean(axis=(1, 3))
+
+average_jit = jax.jit(average, out_shardings=jax.NamedSharding(mesh, P('X','Y')))
+
+x = jnp.arange(8 * 64 * 8, dtype=jnp.int32).reshape(8 * 64, 8)
+x = jax.device_put(x, jax.NamedSharding(mesh, P('X','Y')))
+
+y1 = average_shmap(x)
+y2 = average_jit(x)
+
+np.testing.assert_array_equal(y1, y2)
+```
+
+Part 2: Here is a similar solution to Part 2.
+
+```py
+import numpy as np
+
+import jax
+import jax.numpy as jnp
+from jax.experimental import shard_map
+
+import functools
+
+P = jax.sharding.PartitionSpec
+
+mesh = jax.make_mesh((4, 2), ('X','Y'))
+
+def shift_shmap(x, shift: int):
+  shmapped = shard_map.shard_map(
+      lambda x: jnp.roll(x, shift, axis=0), 
+      mesh=mesh, 
+      in_specs=P('X','Y'), out_specs=P('X','Y')
+  )
+  return shmapped(x)
+
+@functools.partial(jax.jit, static_argnames=['shift'], out_shardings=jax.NamedSharding(mesh, P('X','Y')))
+def shift_jit(x, shift: int):
+  X, Y = mesh.axis_sizes
+  reshaped = x.reshape(X, x.shape[0] // X, -1)
+  return jnp.roll(reshaped, shift, axis=1).reshape(x.shape[0], x.shape[1])
+
+x = jnp.arange(8 * 64 * 8, dtype=jnp.int32).reshape(8 * 64, 8)
+x = jax.device_put(x, jax.NamedSharding(mesh, P('X','Y')))
+
+y1 = shift_shmap(x, 5)
+y2 = shift_jit(x, 5)
+
+np.testing.assert_array_equal(y1, y2)
+```
+
+{% enddetails %}
+
+**Problem 2:** Here we'll make a basic "mixture of experts" model together. Let **W**: float32[E<sub>X</sub>, D, F<sub>Y</sub>] be a set of E "expert" matrices. Let **A**: float32[S<sub>X</sub>, D<sub>Y</sub>] (our activations) and let **B** be a set of "routing assignments" where B[i] is an integer in the range `[0, E)` telling us which matrix we want to process that activation. We want to write a function in JAX that returns `Out[i] = W[B[i]] @ A[i]`.
 
 1. Let's start by ignoring sharding altogether. Make all of these tensors small enough so they fit in one device. Write a local implementation of this function. *Make sure you don't materialize an array of shape `[S, D, F]`! Hint: try sorting the tokens into a new buffer of shape `[E, S, D]` with some attention to masking (why do we need the second dimension to have size S?).*
 

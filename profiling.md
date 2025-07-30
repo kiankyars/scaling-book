@@ -181,7 +181,7 @@ Let's break this down into its pieces.
 * **Op Name**: fusion.3 
   * A dot or fusion op is a set of operations containing at most 1 matrix multiplication and possibly a bunch of related pointwise VPU-ops. 
 * **Shape/layout**: `bf16[32,32,4096]`
-  * This is the output shape of the op. We can see the dtype is bf16 (2 bytes per parameter) and `[32,32,4096`] is the shape. 
+  * This is the output shape of the op. We can see the dtype is bf16 (2 bytes per parameter) and `[32,32,4096]` is the shape. 
 * **Layout:** `{2,1,0:T(8,128)(2,1)}`
   * `{2,1,0:T(8,128)(2,1)}` tells us the order of the axes in memory (column major, row major, etc.) and the array padding. More below. 
 * **Memory location:** S(1) 

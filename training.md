@@ -462,7 +462,7 @@ Below we plot the ratio of FLOPs to comms time for mixed FSDP + MP, comparing it
 
 Here's another example of TPU v5p 16x16x16 showing the FLOPs and comms time as a function of batch size for different sharding schemes.
 
-{% include figure.liquid path="assets/img/comms-flops-time.png" class="img-fluid" caption="<b>Figure:</b> time taken for communication with different parallelism schemes. The black dashed line is the time taken by the matrix multiplication FLOPs, so any curve above this line is comms-bound. We note that all strategies become comms-bound below batch size 1.5e6, which is in line with our expected 4096 * 2 * 2550^2 / (8192 * 4) = 1.6e10." %}
+{% include figure.liquid path="assets/img/comms-flops-time.png" class="img-fluid" caption="<b>Figure:</b> time taken for communication with different parallelism schemes. The black dashed line is the time taken by the matrix multiplication FLOPs, so any curve above this line is comms-bound. We note that all strategies become comms-bound below batch size 1.5e6, which is in line with our expected 4096 * 2 * 2550^2 / (8192 * 4) = 1.6e6." %}
 
 The black curve is the amount of time spent on model FLOPs, meaning any batch size where this is lower than all comms costs is strictly comms bound. You'll notice the black curve intersects the green curve at about `1.6e10`, as predicted. 
 
