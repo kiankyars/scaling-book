@@ -94,7 +94,7 @@ Let's remind ourselves what LLaMA 3-70B looks like (see [Section 6](../applied-t
 
 Let's start with a simple question: **what hardware should we serve on?** The answer is basically, whichever is cheapest in FLOPs / dollar.<d-footnote>This isn't always true, sometimes more HBM or ICI bandwidth is critical rather than FLOPs, but this is a good heuristic.</d-footnote> For this reason, we typically want to serve on TPU v5e, our current dedicated inference chip (cost comes from [Google Cloud pricing](https://cloud.google.com/tpu/pricing) as of February 2025):
 
-| **TPU type** | **bfloat16 FLOPS** | **Google Cloud USD / hour** | **FLOPs / $** |
+| **TPU type** | **bfloat16 FLOPs/s** | **Google Cloud USD / hour** | **FLOPs / $** |
 | ------------ | :------------------: | :-------------------------: | :-----------: |
 | H100         |        9.9e14        |            $10.8            |    3.3e17     |
 | v5p          |       4.59e14        |            $4.2             |    3.9e17    |
@@ -129,7 +129,7 @@ The smallest slice we could use would have `112e9 / 16e9 = 7` TPUs, or (rounding
 We can invoke the formula from the previous section that
 
 $$\begin{align*}
-\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPS}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
+\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPs/s}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
 \end{align*}$$
 
 Here our critical batch size will be about 120 since our parameters are in int8 but our FLOPs are in bfloat16. We could also manually calculate the RHS maximum, but that's basically a calculation we've already done several times. **So we're well into the memory-bound regime for both our matmul and our FLOPs.**
@@ -153,10 +153,10 @@ Let's spend a little time thinking purely about throughput. When we optimize for
 As discussed in Section 7, for any bfloat16 matmul for which $B \ll D, F$ we have
 
 $$\begin{equation*}
-T_\text{math} > T_\text{comms} \leftrightarrow \frac{2BDF}{2DF} \geq \frac{\text{TPU bfloat16 FLOPS}}{\text{HBM bandwidth}} = 240
+T_\text{math} > T_\text{comms} \leftrightarrow \frac{2BDF}{2DF} \geq \frac{\text{TPU bfloat16 FLOPs/s}}{\text{HBM bandwidth}} = 240
 \end{equation*}$$
 
-When our weights are in int8, we lose a factor of 2 in the denominator, so we have $2BDF / DF = 2B > 240$, or equally $B > 120$, half the critical batch size from before. That's really helpful for us! When we do int8 weights and int8 FLOPs, we have to use the int8 value for TPU FLOPS, which goes from 1.97e14	for bfloat16 to 3.94e14, nearly double. That means we're back where we started at about $B > 240$.
+When our weights are in int8, we lose a factor of 2 in the denominator, so we have $2BDF / DF = 2B > 240$, or equally $B > 120$, half the critical batch size from before. That's really helpful for us! When we do int8 weights and int8 FLOPs, we have to use the int8 value for TPU FLOPs/s, which goes from 1.97e14	for bfloat16 to 3.94e14, nearly double. That means we're back where we started at about $B > 240$.
 
 The case of int8 weights and bfloat16 FLOPs is quite common, since quantizing parameters losslessly is often easier than doing low-precision arithmetic.
 

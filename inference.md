@@ -142,18 +142,18 @@ For the next couple of sections, we're going to look at each of these in the con
 
 All our linear operations are conceptually the same, whether they live in the MLP block or attention. Their arithmetic intensity depends on the batch size. We did this math in [Section 1](../roofline) but it's worth repeating. Let's look at a single matrix multiply of a $\text{bf16[B, D]}$ batch by a $\text{bf16[D, F]}$ matrix. This could be the big MLP block or one of the smaller attention projections ($W_Q$, $W_K$, $W_V$, $W_O$). To do this matrix multiplication, we need to load both of these arrays from HBM into the MXU, do the multiplicaton, then write the result back to HBM. As before, we have:
 
-$$T_\text{math} = \frac{\text{Total FLOPs}}{\text{TPU FLOPS}} = \frac{2BDF}{\text{TPU FLOPS}}$$
+$$T_\text{math} = \frac{\text{Total FLOPs}}{\text{TPU FLOPs/s}} = \frac{2BDF}{\text{TPU FLOPs/s}}$$
 
 $$T_\text{comms} = \frac{\text{Total Bytes}}{\text{HBM Bandwidth}} = \frac{2BD + 2FD + 2BF}{\text{HBM Bandwidth}}$$
 
 The TPU can overlap these by loading as it does the compute, so to be compute-bound, we need $$T_\text{math} \geq T_\text{comms}$$, or:
 
-$$\frac{2BDF}{2BD + 2DF + 2BF} \geq \frac{\text{TPU FLOPS}}{\text{HBM Bandwidth}} = \frac{1.97E+14}{8.20E+11} = 240$$
+$$\frac{2BDF}{2BD + 2DF + 2BF} \geq \frac{\text{TPU FLOPs/s}}{\text{HBM Bandwidth}} = \frac{1.97E+14}{8.20E+11} = 240$$
 
 where the RHS is the arithmetic intensity of our hardware. Now let's assume $D$ and $F$ are very large compared to $B$ (usually our batches are at most 500 and $D$ and $F > 10k$), we can simplify the denominator by using the fact that $\small{2BD + 2DF + 2BF \approxeq 2DF}$ which gives us
 
 $$\begin{align*}
-\frac{2BDF}{2BD + 2DF + BF} \approxeq \frac{2BDF}{2DF} \geq \frac{\text{TPU FLOPS}}{\text{HBM Bandwidth}} \\
+\frac{2BDF}{2BD + 2DF + BF} \approxeq \frac{2BDF}{2DF} \geq \frac{\text{TPU FLOPs/s}}{\text{HBM Bandwidth}} \\
 = \frac{1.97E+14}{8.20E+11} \implies B \geq 240 = B_{\text{crit}}
 \end{align*}$$
 
@@ -216,7 +216,7 @@ $$\begin{equation*}
 Eventually, as our batch size grows, FLOPs begin to dominate parameter loading, so in practice we have the more general equation:
 
 $$\begin{align}
-\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPS}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
+\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPs/s}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
 \end{align}$$
 
 where the attention component (left) is never compute-bound, and thus doesn't need a FLOPs roofline. These are fairly useful for back-of-the-envelope calculations, e.g.
@@ -225,7 +225,7 @@ where the attention component (left) is never compute-bound, and thus doesn't ne
 
 {% details Click here for the answer. %}
 
-**Answer:** in int8, our parameters will use 30e9 bytes and with the given specs our KV caches will use `100e3 * 8192 = 819MB` each. We have 16 chips, each with `8.1e11` bytes/s of bandwidth and `1.97e14` bf16 FLOPS. From the above equations, since we have a small batch size, we expect our step time to be at least `(4 * 819e6 + 30e9) / (16 * 8.1e11) = 2.5 ms`. At 256 tokens, we'll be well into the compute-bound regime for our MLP blocks, so we have a step time of roughly `(256 * 819e6) / (16 * 8.1e11) + (2 * 256 * 30e9) / (16 * 1.97e14) = 21ms`.
+**Answer:** in int8, our parameters will use 30e9 bytes and with the given specs our KV caches will use `100e3 * 8192 = 819MB` each. We have 16 chips, each with `8.1e11` bytes/s of bandwidth and `1.97e14` bf16 FLOPs/s. From the above equations, since we have a small batch size, we expect our step time to be at least `(4 * 819e6 + 30e9) / (16 * 8.1e11) = 2.5 ms`. At 256 tokens, we'll be well into the compute-bound regime for our MLP blocks, so we have a step time of roughly `(256 * 819e6) / (16 * 8.1e11) + (2 * 256 * 30e9) / (16 * 1.97e14) = 21ms`.
 
 {% enddetails %}
 
@@ -347,7 +347,7 @@ So far we've handwaved how we're scaling beyond a single chip. Following [Sectio
 
 ### Prefill
 
-From a roofline standpoint, **prefill is almost identical to training** and almost all the same techniques and tradeoffs apply — model (Megatron) parallelism, sequence sharding (for sufficiently long context), pipelining, even FSDP are all viable! You just have to keep the KVs kicking around so you can do generation later. As in training, increasing the number of chips gives us access to more FLOPS (for potentially lower TTFT), but adds communication overhead (potentially reducing throughput per chip).
+From a roofline standpoint, **prefill is almost identical to training** and almost all the same techniques and tradeoffs apply — model (Megatron) parallelism, sequence sharding (for sufficiently long context), pipelining, even FSDP are all viable! You just have to keep the KVs kicking around so you can do generation later. As in training, increasing the number of chips gives us access to more FLOPs/s (for potentially lower TTFT), but adds communication overhead (potentially reducing throughput per chip).
 
 **The general rule for sharding prefill:** here's a general set of rules for prefill. We'll assume we're doing prefill on a single sequence only (no batch dimension):
 

@@ -88,7 +88,7 @@ _styles: >
 
 ## Partitioning Notation and Collective Operations
 
-When we train an LLM on ten thousand TPUs, we're still doing abstractly the same computation as when we're training on one. The difference is that **our arrays don't fit in the HBM of a single TPU**, so we have to split them up.<d-footnote>It's worth noting that we may also choose to parallelize for speed. Even if we could fit on a smaller number of chips, scaling to more simply gives us more FLOPS. During inference, for instance, we can sometimes fit on smaller topologies but choose to scale to larger ones in order to reduce latency. Likewise, during training we often scale to more chips to reduce the step time.</d-footnote> We call this "*sharding*” or "*partitioning*” our arrays.
+When we train an LLM on ten thousand TPUs, we're still doing abstractly the same computation as when we're training on one. The difference is that **our arrays don't fit in the HBM of a single TPU**, so we have to split them up.<d-footnote>It's worth noting that we may also choose to parallelize for speed. Even if we could fit on a smaller number of chips, scaling to more simply gives us more FLOPs/s. During inference, for instance, we can sometimes fit on smaller topologies but choose to scale to larger ones in order to reduce latency. Likewise, during training we often scale to more chips to reduce the step time.</d-footnote> We call this "*sharding*” or "*partitioning*” our arrays.
 
 Here's an example 2D array **A** sharded across 4 TPUs:
 
@@ -550,7 +550,7 @@ Our array in bfloat16 uses only 256 bytes total, and only 64 per device. Since w
 
 {% details Click here for the answer. %}
 
-Let's start with our baseline (*Strategy 1*). As we've shown, the cost of the AllGather is $2DF / W_\text{ici}$. Once we have the fully replicated arrays, the total compute time is $2BDF / C$ (where $C$ is our accelerator FLOPS, since each TPU does the same FLOPs). So we have
+Let's start with our baseline (*Strategy 1*). As we've shown, the cost of the AllGather is $2DF / W_\text{ici}$. Once we have the fully replicated arrays, the total compute time is $2BDF / C$ (where $C$ is our accelerator FLOPs/s, since each TPU does the same FLOPs). So we have
 
 $$T_\text{total (Strategy 1)} = \max\left(\frac{2BDF}{C}, \frac{2DF}{W_\text{ici}}\right)$$
 
