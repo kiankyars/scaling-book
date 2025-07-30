@@ -283,11 +283,11 @@ We'll be FLOPs-bound when $\frac{6.7e7 + 2e4\cdot B}{8.1e11} < \frac{1.3e8 \cdot
 
 It should be clear that option (2) is better. DCN is slow compared to ICI and we'd much prefer to load a big array over many PCIe links rather than just a few (the 8 on host 0). Here's a diagram of part of the system. As described above, note that TPUs are connected to their neighbors by ICI (even across hosts), all TPUs are connected to their host CPU (via PCIe), and hosts are connected by DCN.
 
-{% include figure.liquid path="assets/img/challenge-problem.png" class="img-fluid img-small" %}
+{% include figure.liquid path="assets/img/challenge-problem.png" class="img-fluid img-small" caption="Each chip actually has its own PCIe link to its host, though for clarity only one is shown here." %}
 
 Now let's work through how long each piece will take:
 
-1. **PCIe load**: we're loading chunks of 16GB / 2 = 8GB over 2 PCIe links, each of which has `1.5e10` bytes/second bandwidth. Thus this will take about 66ms.
+1. **PCIe load**: we're loading chunks of 16GB / 2 = 8GB over 16 PCIe links, each of which has `1.5e10` bytes/second bandwidth. Thus this will take about 33ms.
 
 2. **ICI copy:** each TPU now has 16GB / 16 = 1GB of our array. Our ICI bandwidth is 9e10 bytes/second per link *bidirectional*, and you'll notice from the above diagram that only 2 of the 4 ICI links on the TPU v5e are in use in this topology for TPU{0,0}. Since TPU{0,0} needs to receive a total of 15GB along 2 axes at `4.5e10` bytes/s/link, we can lower bound the time by `15e9 / (4.5e10 * 2) = 167ms`. In practice this probably isn't achievable because the load is very uneven, but it's probably within a factor of 2. As you'll see in Section 2, performing a full AllGather would also take roughly `16e9 / (4.5e10 * 2)`, so this is close to optimal.
 
