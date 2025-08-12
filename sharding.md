@@ -151,7 +151,6 @@ JAX uses a named sharding syntax that very closely matches the abstract syntax w
 3. Compiles and performs a simple matrix multiplication that returns a sharded array.
 
 ```py
-import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
