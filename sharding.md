@@ -154,19 +154,20 @@ JAX uses a named sharding syntax that very closely matches the abstract syntax w
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import NamedSharding, PartitionSpec
 
 # Create our mesh! We're running on a TPU v2-8 4x2 slice with names 'X' and 'Y'.
 assert len(jax.devices()) == 8
-mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('X', 'Y'))
+mesh = jax.make_mesh(axis_shapes=(4, 2), axis_names=('X', 'Y'))
 
-# Utility to create a NamedSharding from a PartitionSpec
+# A little utility function to help define our sharding. A PartitionSpec is our
+# sharding (a mapping from axes to names).
 def P(*args):
   return NamedSharding(mesh, PartitionSpec(*args))
 
 # We shard both A and B over the non-contracting dimension and A over the contracting dim.
-A = jax.device_put(jnp.zeros((8, 2048), dtype=jnp.bfloat16), P('X', 'Y'))
-B = jax.device_put(jnp.zeros((2048, 8192), dtype=jnp.bfloat16), P(None, 'Y'))
+A = jnp.zeros((8, 2048), dtype=jnp.bfloat16, device=P('X', 'Y'))
+B = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, device=P(None, 'Y'))
 
 # We can perform a matmul on these sharded arrays! out_shardings tells us how we want
 # the output to be sharded. JAX/XLA handles the rest of the sharding for us.
