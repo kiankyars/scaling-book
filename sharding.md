@@ -153,7 +153,6 @@ JAX uses a named sharding syntax that very closely matches the abstract syntax w
 ```py
 import jax
 import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec
 
 # Create our mesh! We're running on a TPU v2-8 4x2 slice with names 'X' and 'Y'.
 assert len(jax.devices()) == 8
@@ -162,7 +161,7 @@ mesh = jax.make_mesh(axis_shapes=(4, 2), axis_names=('X', 'Y'))
 # A little utility function to help define our sharding. A PartitionSpec is our
 # sharding (a mapping from axes to names).
 def P(*args):
-  return NamedSharding(mesh, PartitionSpec(*args))
+  return jax.NamedSharding(mesh, jax.P(*args))
 
 # We shard both A and B over the non-contracting dimension and A over the contracting dim.
 A = jnp.zeros((8, 2048), dtype=jnp.bfloat16, device=P('X', 'Y'))
