@@ -2,7 +2,7 @@
 layout: distill
 title: "Programming TPUs in JAX"
 # permalink: /main/
-description: "How to use JAX to program TPUs efficiently! Much of this section is taken from <a href='https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html'>here</a>."
+description: "How to use JAX to program TPUs efficiently! Much of this section is taken from <a href='https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html'>here</a>. You can run the code examples in this section with free TPUs on <a href='https://colab.sandbox.google.com/'>Google Colab</a>."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -55,7 +55,7 @@ toc:
   - subsections:
     - name: "Auto sharding mode"
     - name: “Explicit sharding mode”
-    - name: "Manual sharding mode via jax.shard_map"
+    - name: "Manual sharding mode via shard_map"
   - name: "Worked Problems"
 
 # Below is an example of injecting additional post-specific styles.
@@ -80,22 +80,22 @@ _styles: >
 
 ## How Does Parallelism Work in JAX?
 
-JAX supports three levels of parallelism for multi-device programming:
+JAX supports three schools of thought for multi-device programming:
 
-1. **Compiler, take the wheel!** You write normal, single device JAX code, and the compiler automatically shards data and partitions computation for you, no matter how many devices you're running on.
+1. **Compiler, take the wheel!** Let the XLA compiler automatically partition arrays and decide what communication to add to facilitate a given program. This lets you take a program that runs on a single device and automatically run it on thousands without changing anything.
 2. **JAX, take the wheel!** Automatic parallelism is great, but sometimes the compiler does something crazy. Explicit sharding lets you write single-device code like usual, but have JAX handle sharding propagation (not the compiler). This means JAX can ask you for clarification when it's unclear what you want.
-3. **Just let me write what I mean, damnit!** While compilers are nice, they sometimes do the wrong thing and add communication you don't intend. Sometimes we want to be explicit about what communication collectives we want to write.
+3. **Just let me write what I mean, damnit!** While compilers are nice, they sometimes do the wrong thing and add communication you don't intend. Sometimes we want to be explicit about exactly what communication you intend to run.
 
 | Mode | View? | Explicit sharding? | Explicit Collectives? |
-|---|---|---|---|
+|:---:|:---:|:---:|:---:|
 | Auto | Global | ❌ | ❌ |
 | Explicit | Global | ✅ | ❌ |
 | Manual | Per-device | ✅ | ✅ |
 
 Correspondingly, JAX provides APIs for each of these modes:
 
-1. `jax.jit` + `Auto` axes lets you specify the sharding of the inputs and outputs to a program (via `in_shardings` and `out_shardings`) and infers the rest using the [Shardy](https://openxla.org/shardy) compiler. While it isn't perfect, it usually does a decent job at automatically scaling your program to any number of chips.
-2. `jax.jit` + `Explicit` axes will let JAX's sharding propagation decide how the intermediates and outputs should be sharded. JAX will error out when it detects ambiguous communication and lets the user resolve it.
+1. `jax.jit` (with `Auto` mesh axes) lets you take any existing JAX function and call it with sharded inputs. JAX then uses XLA's [Shardy](https://openxla.org/shardy) compiler which automatically parallelizes the program. XLA will add communication for you (AllGathers, ReduceScatters, AllReduces, etc.) when needed to facilitate existing operations. While it isn't perfect, it usually does a decent job at automatically scaling your program to any number of chips without code changes.
+2. `jax.jit` with `Explicit` mesh axes looks similar to (1), but lets JAX handle the sharding propagation instead of XLA. That means the sharding of an array is actually part of the JAX type system, and JAX can error out when it detects ambiguous communication and lets the user resolve it.
 3. `jax.shard_map` is the more manual counterpart. You get a device-local view of the program and have to write any communication you want explicitly. Have a sharded array and want the whole thing on each device? Add a `jax.lax.all_gather`. Want to sum an array across your devices? Add a `jax.lax.psum` (an AllReduce). Programming is harder but far less likely to do something you don't want.
 
 <h3 id="auto-sharding-mode">Auto sharding mode</h3>
@@ -106,8 +106,8 @@ jax.jit plays two roles inside JAX. As the name suggests, it "just-in-time" comp
 import jax
 import jax.numpy as jnp
 
-# Running on an TPU v5e 2x2. This assigns names to the two physical axes of the hardware.
-mesh = jax.make_mesh(axis_shapes=(2, 2), axis_names=('X', 'Y'))
+# Running on an TPU v5e 4x2. This assigns names to the two physical axes of the hardware.
+mesh = jax.make_mesh(axis_shapes=(4, 2), axis_names=('X', 'Y'))
 
 # This tells JAX to use this mesh for all operations, so you can just specify the PartitionSpec P.
 jax.set_mesh(mesh)
@@ -128,27 +128,27 @@ out = jit_matmul(In, W)
 
 This will run automatically with any sharding and partition the computation across our devices. **But what's actually happening at the hardware level?**
 
-1. First we create In and W sharded across our devices<d-footnote>Notice how we did this.  This is one way to create an array with a particular sharding (i.e. by adding the device argument to the creation function). Another one is to create an array normally with `jnp.array(....)` and then do e.g. `jax.device_put(..., P('x', 'y'))`.  Yet another is to write a function which creates the array you want, and jit-compile it with `out_shardings` being what you want.</d-footnote>. W is sharded 2 way along the contracting dimension, while In is sharded 4-ways (along both the contracting and output dimensions). This corresponds to a sharding W[D<sub>X</sub>, F] and In[B<sub>X</sub>, D<sub>Y</sub>], aka a kind of model and data parallelism. 
+1. First we create In and W sharded across our devices<d-footnote>Notice how we did this.  This is one way to create an array with a particular sharding (i.e. by adding the device argument to the creation function). Another one is to create an array normally with `jnp.array(....)` and then do e.g. `jax.device_put(..., P('x', 'y'))`.  Yet another is to write a function which creates the array you want, and jit-compile it with `out_shardings` being what you want.</d-footnote>. W is sharded 2 way along the contracting dimension, while In is sharded 4-ways (along both the contracting and output dimensions). This corresponds to a sharding W[D<sub>X</sub>, F] and In[B<sub>X</sub>, D<sub>Y</sub>], aka a kind of model and data parallelism.
 2. If we were running this locally (i.e. on one device), `matmul_square` would simply square the input and perform a simple matmul. But because we specify the `out_shardings` as `P('X', None)`, the output will be sharded along the batch but replicated across the model dimension and will require an AllReduce to compute.
 
 Using our notation from previous sections, this will likely do something like
 
-1. Out[B<sub>X</sub>, F] { U<sub>Y</sub> } = In[B<sub>X</sub>, D<sub>Y</sub>] \*<sub>D</sub> W[D<sub>Y</sub>, F] 
+1. Out[B<sub>X</sub>, F] { U<sub>Y</sub> } = In[B<sub>X</sub>, D<sub>Y</sub>] \*<sub>D</sub> W[D<sub>Y</sub>, F]
 2. Out[B<sub>X</sub>, F] = **AllReduce**(Out[B<sub>X</sub>, F] { U<sub>Y</sub> })
 
 `jax.jit` will add this for us automatically! We can actually print the HLO with `jit_matmul.as_text()` and see the following HLO (abbreviated dramatically):
 
 ```py
 # This fusion is the actual matmul of the sharded inputs and matrix
-%fusion = bf16[4,8192]{1,0:T(4,128)(2,1)S(1)} fusion(bf16[4,1024]{1,0:T(4,128)(2,1)} %param, bf16[8192,1024]{1,0:T(8,128)(2,1)S(1)} %copy-done)
+%fusion = bf16[2,8192]{1,0:T(4,128)(2,1)S(1)} fusion(bf16[2,1024]{1,0:T(4,128)(2,1)} %param, bf16[8192,1024]{1,0:T(8,128)(2,1)S(1)} %copy-done)
 
 # We reduce the partially summed results across devices
-ROOT %AllReduce = bf16[4,8192]{1,0:T(4,128)(2,1)} AllReduce(bf16[4,8192]{1,0:T(4,128)(2,1)S(1)} %fusion)
+ROOT %AllReduce = bf16[2,8192]{1,0:T(4,128)(2,1)} AllReduce(bf16[2,8192]{1,0:T(4,128)(2,1)S(1)} %fusion)
 ```
 
-We can see the matmul (the fusion) and the AllReduce above. Pay particular attention to the shapes. `bf16[4, 1024]` is a local view of the activations, since our `batch_size=8` is split across 2 devices and our `d_model=2048` is likewise split 2 ways.
+We can see the matmul (the fusion) and the AllReduce above. Pay particular attention to the shapes. `bf16[2, 1024]` is a local view of the activations, since our `batch_size=8` is split across 4 devices and our `d_model=2048` is likewise split 2 ways.
 
-**This is pretty magical!** No matter how complicated our program is, Shardy and jit will attempt to find shardings for all the intermediate activations and add communication as needed. With that said, Shardy has its flaws. It can make mistakes. Sometimes you'll look at a profile and notice something has gone wrong. A giant AllGather takes up 80% of the profile, where it doesn't need to. When this happens, we can try to correct the compiler by explicitly annotating intermediate tensors with `jax.lax.with_sharding_constraint`. For instance, with two matmuls I can force the intermediate activations to be sharded along the `y` dimension (not that this is a good idea) with the following:
+**This is pretty magical!** No matter how complicated our program is, [Shardy]((https://openxla.org/shardy)) and jit will attempt to find shardings for all the intermediate activations and add communication as needed. With that said, Shardy has its flaws. It can make mistakes. Sometimes you'll look at a profile and notice something has gone wrong. A giant AllGather takes up 80% of the profile, where it doesn't need to. When this happens, we can try to correct the compiler by explicitly annotating intermediate tensors with `jax.lax.with_sharding_constraint`. For instance, with two matmuls I can force the intermediate activations to be sharded along the `y` dimension (not that this is a good idea) with the following:
 
 ```py
 import jax
@@ -166,7 +166,7 @@ This makes up like 60% of JAX parallel programming in the automatic partitioning
 
 <h3 id="explicit-sharding-mode">Explicit sharding mode</h3>
 
-Explicit sharding (or “sharding in types”) is the mode where sharding propagation happens at the JAX level at trace time. Each JAX operation has a sharding rule that takes the shardings of the op's arguments and produces a sharding for the op's result. For most operations these rules are simple and obvious because there's only one reasonable choice (e.g. elementwise ops retain the same sharding). But for some operations it's ambiguous how to shard the result in which case JAX throws a trace-time error and we ask the programmer to provide an `out_sharding` argument explicitly (e.g. jnp.einsum, jnp.reshape, etc).
+Explicit sharding (or “sharding in types”) looks a lot like automatic sharding, but sharding propagation happens at the JAX level! Each JAX operation has a sharding rule that takes the shardings of the op's arguments and produces a sharding for the op's result. You can see the resulting sharding using `jax.typeof`:
 
 ```py
 import jax
@@ -192,7 +192,7 @@ def f(x):
 f(x)
 ```
 
-As you can see, JAX propagated the sharding from input (`x`) to output (`x`) which are inspectable at trace-time via `jax.typeof`. Let's see another example where you have conflicts:
+As you can see, JAX propagated the sharding from input (`x`) to output (`x`) which are inspectable at trace-time via `jax.typeof`. For most operations these rules are simple and obvious because there's only one reasonable choice (e.g. elementwise ops retain the same sharding). But for some operations it's ambiguous how to shard the result in which case JAX throws a trace-time error and we ask the programmer to provide an `out_sharding` argument explicitly (e.g. jnp.einsum, jnp.reshape, etc). Let's see another example where you have conflicts:
 
 ```py
 # We create a matrix W and input activations In sharded across our devices.
@@ -227,7 +227,7 @@ print(jax.typeof(out))  # bfloat16[8@X,8192@Y]
 
 Auto mode and Explicit mode can be composed via `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` APIs. This is a [great doc to read](https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html) for more information.
 
-<h3 id="shard-map-explicit-parallelism-control-over-a-program">shard_map: explicit parallelism control over a program</h3>
+<h3 id="manual-sharding-mode-via-shard_map">shard_map: explicit parallelism control over a program</h3>
 
 While Shardy is the "compiler take the wheel" mode, jax [shard_map](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html) puts everything in your hands. You specify the sharding of the inputs, like in jax.jit, but then you write all communication explicitly. Whereas `jax.jit` leaves you with a global cross-device view of the program, `shard_map` gives you a local per-device view.
 
@@ -259,7 +259,7 @@ assert out.shape == (4,)
 
 **Example [Collective Matmul]:** To take a more realistic example, say we to implement model parallelism where the activations are initially model sharded, i.e. A[B<sub>X</sub>, D<sub>Y</sub>] \* W[D, F<sub>Y</sub>] -> Out[B<sub>X</sub>, F<sub>Y</sub>]. Naively, we would do this by AllGathering A first followed by a local matrix multiplication:
 
-1. A[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(A[B<sub>X</sub>, D<sub>Y</sub>]) 
+1. A[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(A[B<sub>X</sub>, D<sub>Y</sub>])
 2. Out[B<sub>X</sub>, F<sub>Y</sub>] = A[B<sub>X</sub>, D] *<sub>D</sub> W[D, F<sub>Y</sub>]
 
 Sadly, this is bad because it doesn't allow us to overlap the communication with the computation. Overlapping them can be done with a "collective matmul", as described in [Wang et al. 2023](https://dl.acm.org/doi/pdf/10.1145/3567955.3567959). The algorithm is basically as follows:
@@ -336,7 +336,7 @@ This is pretty neat! We can benchmark this and see that it's also a lot faster! 
 
 {% include figure.liquid path="assets/img/not-overlapped.png" class="img-fluid" %}
 
-And [here's](https://imgur.com/a/21iy0Sv) the version above that takes 244 us. You can see the profile doesn't have the AllGather. It's all useful work! Our FLOPs utilization is also a lot higher. 
+And [here's](https://imgur.com/a/21iy0Sv) the version above that takes 244 us. You can see the profile doesn't have the AllGather. It's all useful work! Our FLOPs utilization is also a lot higher.
 
 {% include figure.liquid path="assets/img/overlapped.png" class="img-fluid" %}
 
@@ -357,7 +357,7 @@ Here are some random JAX-related problems. I'll add some more later. For all of 
 {% details Click here for the answer. %}
 
 Part 1: Here is a solution to part 1. Note the fairly complex reshapes we have to do for the `jax.jit` solution.
- 
+
 ```py
 import numpy as np
 
@@ -369,8 +369,8 @@ P = jax.sharding.PartitionSpec
 mesh = jax.make_mesh((4, 2), ('X','Y'))
 
 average_shmap = jax.shard_map(
-    lambda x: x.mean(keepdims=True), 
-    mesh=mesh, 
+    lambda x: x.mean(keepdims=True),
+    mesh=mesh,
     in_specs=P('X','Y'), out_specs=P('X','Y')
 )
 
@@ -405,8 +405,8 @@ mesh = jax.make_mesh((4, 2), ('X','Y'))
 
 def shift_shmap(x, shift: int):
   shmapped = jax.shard_map(
-      lambda x: jnp.roll(x, shift, axis=0), 
-      mesh=mesh, 
+      lambda x: jnp.roll(x, shift, axis=0),
+      mesh=mesh,
       in_specs=P('X','Y'), out_specs=P('X','Y')
   )
   return shmapped(x)
@@ -436,9 +436,9 @@ np.testing.assert_array_equal(y1, y2)
 
 3. One problem you'll notice with the above is that it likely gathers the full set of activations **A** locally, i.e. AllGather<sub>X</sub>([S<sub>X</sub>, D<sub>Y</sub>]), Not only is this expensive communication-wise, it's also incredibly expensive memory-wise if we can't fit the full set of activations locally. Implement the above using `shard_map` and explicit communication.
 
-      1. For a first pass, it might be easiest to use a `jax.lax.all_gather` and reorder as in (a).  
+      1. For a first pass, it might be easiest to use a `jax.lax.all_gather` and reorder as in (a).
 
-      2. For a second pass, try to avoid materializing any array of size `[E, S, D]`, i.e. try to perform the computation in a ragged fashion using a `jax.lax.all_to_all` inside a `jax.lax.while_loop`. This way, you can avoid materializing the full activations and wasting compute on padding. How much faster is this than your original implementation?  
+      2. For a second pass, try to avoid materializing any array of size `[E, S, D]`, i.e. try to perform the computation in a ragged fashion using a `jax.lax.all_to_all` inside a `jax.lax.while_loop`. This way, you can avoid materializing the full activations and wasting compute on padding. How much faster is this than your original implementation?
 
 4. Most MoEs route to multiple (k) experts and then average the result. Refactor the above to implement this. Let **B**: int32[S, k] in this case for the k experts to route to.
 
